@@ -215,10 +215,10 @@ button.n{appearance:none;border:0;background:none;padding:0;color:var(--accent);
       <li><b>Nilai Over Max</b> = (Qty Stock Qty and Value − Maximum Stock) × harga pokok per unit (Value ÷ Quantity dari Stock Qty and Value).</li>
       <li><b>Perlu order</b> = item Repsis yang Qty di Stock Qty and Value <b>di bawah Minimum Stock</b> dan <b>tidak ada Outstanding PO maupun Outstanding TR</b> (termasuk TR dari store lain).</li>
       <li><b>Stockout Planogram</b>: dihitung per <b>baris</b> Item Planogram (item di beberapa lokasi dihitung beberapa kali), Consignment ikut dihitung. Repsis = No Item ada di Replenishment. <b>Stock = Nol</b> = Qty di Stock Qty and Value tepat 0 (minus tidak termasuk; item yang tidak ada di file stok dihitung 0). <b>Stock &lt; Half Capacity</b> = Qty di bawah setengah Capacity baris tersebut, termasuk Qty 0 dan minus (item Stock = Nol juga masuk di sini). % = dibagi ∑ Item kelompoknya.</li>
-      <li><b>History Sales</b>: file transaksi Retail and Distribution Sales diringkas per No Item per bulan (Net Qty = Sales Qty + Return Qty, Amount Exclude Tax). <b>Tidak terjual</b> = total Net Qty periode tersebut 0 atau kurang. <b>Dead stock</b> = Qty stok &gt; 0 dan tidak terjual selama periode History Sales. Type Brand item tanpa penjualan diambil dari brand yang sama.</li>
+      <li><b>History Sales</b> (khusus file ini, upload <b>menambah</b> data): file transaksi Retail and Distribution Sales diringkas per No Item per tanggal. Penjualan pada rentang Posting Date file baru yang sudah tersimpan <b>diganti</b> isi file baru (data sama tidak dobel), tanggal lain tetap. Tab History Sales memakai 6 bulan terakhir (bisa dipilih lewat filter Bulan) (Net Qty = Sales Qty + Return Qty, Amount Exclude Tax). <b>Tidak terjual</b> = total Net Qty periode tersebut 0 atau kurang. <b>Dead stock</b> = Qty stok &gt; 0 dan tidak terjual selama periode History Sales. Type Brand item tanpa penjualan diambil dari brand yang sama.</li>
       <li><b>Cover (hari)</b> = Qty Stock Qty and Value ÷ Average Sales per hari. Kosong jika Average Sales 0.</li>
       <li>Item Non Repsis dikelompokkan dari Quantity: Ada stok (&gt; 0), Stok 0, Minus (&lt; 0).</li>
-      <li><b>Update = ganti, bukan tambah.</b> Upload Stock Qty and Value baru menghapus seluruh item Stock Qty and Value yang lama lalu menggantinya dengan isi file baru. Begitu juga Replenishment Calculation by Date, Report ABCD Class, Item Planogram, dan History Sales. Item yang tidak ada di file baru tidak akan muncul lagi di dashboard. Yang tetap disimpan hanya ringkasan angka per tanggal di Riwayat harian (tanggal yang sama ditimpa).</li>
+      <li><b>Update = ganti, bukan tambah</b> (kecuali History Sales). Upload Stock Qty and Value baru menghapus seluruh item Stock Qty and Value yang lama lalu menggantinya dengan isi file baru. Begitu juga Replenishment Calculation by Date, Report ABCD Class, dan Item Planogram. <b>Kecuali History Sales</b>: menambah data, tanggal yang sama diganti. Item yang tidak ada di file baru tidak akan muncul lagi di dashboard. Yang tetap disimpan hanya ringkasan angka per tanggal di Riwayat harian (tanggal yang sama ditimpa).</li>
     </ul>
     <div class="row" style="justify-content:flex-start;margin:12px 0 0"><button class="btn danger" id="d-clear" type="button">Hapus semua data</button></div>
   </div>
@@ -320,18 +320,36 @@ function parsePlano(rows, hi) {
 }
 function plItems(x) { var u = {}; x.rows.forEach(function (r) { u[r[0]] = 1; }); return Object.keys(u).length; }
 /* Retail and Distribution Sales (transaksi) → diringkas per No Item per bulan */
+var DAY0 = Date.UTC(2000, 0, 1);
+function dayN(iso) { var p = String(iso || "").split("-"); return p.length < 3 ? null : Math.round((Date.UTC(+p[0], +p[1] - 1, +p[2]) - DAY0) / 864e5); }
+function dayISO(n) { var d = new Date(DAY0 + n * 864e5); return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()); }
 function parseSales(rows, hi) {
-  var c = colMap(rows[hi]), D = dictOf(), m = {}, order = [], months = {}, top = topText(rows, hi);
-  var ci = function (k) { return c[k]; }, iNo = ci("item no"), iNm = ci("item name"), iCat = ci("category"), iMb = ci("master brand"), iBr = ci("brand"), iTb = ci("type brand"), iDt = ci("transaction date"), iQ = ci("net qty (sales qty + return qty)"), iV = ci("amount exclude tax");
-  var mk = function (v) { if (v instanceof Date) return v.getFullYear() + "-" + p2(v.getMonth() + 1); if (typeof v === "number") { var d = new Date(Math.round((v - 25569) * 864e5)); return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1); } var s2 = String(v || ""), a = /(\d{4})-(\d{2})/.exec(s2); if (a) return a[1] + "-" + a[2]; var b = dateIn(s2); return b ? b.slice(0, 7) : ""; };
-  var raw = [];
-  for (var i = hi + 1; i < rows.length; i++) { var r = rows[i]; if (!r) continue; var no = str(r[iNo]); if (!no) continue; var mo = mk(r[iDt]); if (!mo) continue; months[mo] = 1;
-    var x = m[no]; if (!x) { x = m[no] = {no: no, nm: str(r[iNm]), cat: D.i(r[iCat]), mb: D.i(r[iMb]), br: D.i(r[iBr]), tb: D.i(r[iTb]), q: {}, v: {}}; order.push(no); }
-    x.q[mo] = (x.q[mo] || 0) + num(r[iQ]); x.v[mo] = (x.v[mo] || 0) + num(r[iV]); raw.push(1); }
-  var M = Object.keys(months).sort();
+  var c = colMap(rows[hi]), D = dictOf(), m = {}, order = [], top = topText(rows, hi), lo = 1e9, hiD = -1e9, lines = 0;
+  var iNo = c["item no"], iNm = c["item name"], iCat = c["category"], iMb = c["master brand"], iBr = c["brand"], iTb = c["type brand"], iDt = c["transaction date"], iQ = c["net qty (sales qty + return qty)"], iV = c["amount exclude tax"];
+  var dk = function (v) { if (v instanceof Date) { var t = new Date(v.getTime() + 432e5); return dayN(t.getFullYear() + "-" + p2(t.getMonth() + 1) + "-" + p2(t.getDate())); } if (typeof v === "number") return Math.floor(v) - 36526; var s2 = String(v || ""), a = /(\d{4})-(\d{2})-(\d{2})/.exec(s2); if (a) return dayN(a[0]); var b = dateIn(s2); return b ? dayN(b) : null; };
+  for (var i = hi + 1; i < rows.length; i++) { var r = rows[i]; if (!r) continue; var no = str(r[iNo]); if (!no) continue; var d = dk(r[iDt]); if (d == null || isNaN(d)) continue; lines++; if (d < lo) lo = d; if (d > hiD) hiD = d;
+    var x = m[no]; if (!x) { x = m[no] = {a: [no, str(r[iNm]), D.i(r[iCat]), D.i(r[iMb]), D.i(r[iBr]), D.i(r[iTb])], e: {}}; order.push(no); }
+    var e = x.e[d] || (x.e[d] = [d, 0, 0]); e[1] += num(r[iQ]); e[2] += num(r[iV]); }
   var pd = /posting date\s*:\s*(\d{1,2}\s+\w+\s+\d{4})\s*-\s*(\d{1,2}\s+\w+\s+\d{4})/i.exec(top), dr = /data report\s*:\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s+([\d:]+\s*[AP]?M?)/i.exec(top);
-  return {kind: "sales", date: pd ? dateIn(pd[2]) : M.length ? M[M.length - 1] + "-28" : "", from: pd ? dateIn(pd[1]) : M.length ? M[0] + "-01" : "", at: dr ? dateIn(dr[1]) + " " + timeIn(dr[2]) : "", months: M, lines: raw.length, dict: D.arr,
-    rows: order.map(function (k) { var x = m[k]; return [x.no, x.nm, x.cat, x.mb, x.br, x.tb, M.map(function (mo) { return Math.round((x.q[mo] || 0) * 1000) / 1000; }), M.map(function (mo) { return Math.round(x.v[mo] || 0); })]; })};
+  var from = pd ? dateIn(pd[1]) : lines ? dayISO(lo) : "", to = pd ? dateIn(pd[2]) : lines ? dayISO(hiD) : "";
+  return {kind: "sales", fmt: 2, from: from, date: to, at: dr ? dateIn(dr[1]) + " " + timeIn(dr[2]) : "", lines: lines, dict: D.arr,
+    rows: order.map(function (k) { var x = m[k]; return x.a.concat([Object.keys(x.e).map(function (d) { var e = x.e[d]; return [e[0], Math.round(e[1] * 1000) / 1000, Math.round(e[2])]; }).sort(function (a, b) { return a[0] - b[0]; })]); })};
+}
+/* format lama (per bulan) → per tanggal (tanggal 1 tiap bulan) */
+function salesV2(x) { if (!x || x.fmt === 2 || !x.months) return x;
+  var M = x.months; return {kind: "sales", fmt: 2, from: x.from, date: x.date, at: x.at, file: x.file, upAt: x.upAt, lines: x.lines, dict: x.dict, batches: x.batches,
+    rows: x.rows.map(function (r) { var e = []; M.forEach(function (mo, i) { if (r[6][i] || r[7][i]) e.push([dayN(mo + "-01"), r[6][i], r[7][i]]); }); return r.slice(0, 6).concat([e]); })}; }
+/* gabung: data lama tetap, tanggal yang ada di file baru (rentang Posting Date) diganti dengan isi file baru */
+function mergeSales(o, n) {
+  o = salesV2(o); if (!o) { n.batches = [{from: n.from, to: n.date, file: n.file, lines: n.lines, upAt: n.upAt}]; return n; }
+  var f0 = dayN(n.from), t0 = dayN(n.date), D = dictOf(), m = {}, order = [];
+  var put = function (src, r, keepOld) { var d = src.dict, e = keepOld ? r[6].filter(function (x) { return x[0] < f0 || x[0] > t0; }) : r[6]; if (!e.length) return;
+    var x = m[r[0]]; if (!x) { x = m[r[0]] = [r[0], r[1], D.i(d[r[2]]), D.i(d[r[3]]), D.i(d[r[4]]), D.i(d[r[5]]), []]; order.push(r[0]); } x[6] = x[6].concat(e); };
+  n.rows.forEach(function (r) { put(n, r, false); }); o.rows.forEach(function (r) { put(o, r, true); });
+  var rows = order.map(function (k) { var x = m[k]; x[6].sort(function (a, b) { return a[0] - b[0]; }); return x; });
+  var ob = o.batches || [{from: o.from, to: o.date, file: o.file, lines: o.lines, upAt: o.upAt}];
+  var batches = ob.filter(function (b) { return !(dayN(b.from) >= f0 && dayN(b.to) <= t0); }).concat([{from: n.from, to: n.date, file: n.file, lines: n.lines, upAt: n.upAt}]).sort(function (a, b) { return a.from < b.from ? -1 : 1; });
+  return {kind: "sales", fmt: 2, from: o.from < n.from ? o.from : n.from, date: o.date > n.date ? o.date : n.date, at: n.at, file: n.file, upAt: n.upAt, lines: sumBy(batches, function (b) { return b.lines || 0; }), dict: D.arr, rows: rows, batches: batches};
 }
 function sniff(rows) {
   var h = findHead(rows, ["item no", "quantity", "store code"]); if (h >= 0) return parseStock(rows, h);
@@ -386,17 +404,28 @@ function build() {
   buildSales();
 }
 /* History Sales: total per item + tanda terjual / dead stock */
+var SALM = [];
 function buildSales() {
-  SALES = []; SIDX = {}; TBB = {};
-  var AI = ITEMS.concat(CITEMS); AI.forEach(function (it) { it.sq = 0; it.sv = 0; it.sold = false; it.dead = false; it.tb = ""; });
-  if (SAL) { var d = SAL.dict;
-    SAL.rows.forEach(function (r) { var q = 0, v = 0; r[6].forEach(function (x) { q += x; }); r[7].forEach(function (x) { v += x; });
-      var it = IDX[r[0]] || CIDX[r[0]], fr = FCM ? FCM[r[0]] : null, tb = d[r[5]] || "(kosong)", br = d[r[4]] || "";
-      var o = {no: r[0], nm: r[1], cat: d[r[2]] || "(kosong)", mb: d[r[3]] || "(kosong)", br: br, tb: tb, qm: r[6], vm: r[7], q: q, v: v,
+  SALES = []; SIDX = {}; TBB = {}; SALM = [];
+  if (SAL) { SAL = salesV2(SAL); var d = SAL.dict, mo = {};
+    SAL.rows.forEach(function (r) { var it = IDX[r[0]] || CIDX[r[0]], fr = FCM ? FCM[r[0]] : null, tb = d[r[5]] || "(kosong)", br = d[r[4]] || "";
+      var o = {no: r[0], nm: r[1], cat: d[r[2]] || "(kosong)", mb: d[r[3]] || "(kosong)", br: br, tb: tb, e: r[6], it: it,
         cls: it ? it.cls : FCM ? (fr && fr[1] ? fr[1] : "(kosong)") : "(kosong)", cons: it ? !!it.cons : /^\s*C\//i.test(r[1])};
-      if (br && !TBB[br]) TBB[br] = tb; SALES.push(o); SIDX[o.no] = o;
-      if (it) { it.sq = q; it.sv = v; it.sold = q > 0; it.tb = tb; } }); }
-  AI.forEach(function (it) { if (!it.tb) it.tb = SAL ? TBB[it.br] || "(tidak ada sales)" : ""; it.dead = !!(SAL && it.s && it.q > 0 && !it.sold); });
+      r[6].forEach(function (x) { mo[dayISO(x[0]).slice(0, 7)] = 1; });
+      if (br && !TBB[br]) TBB[br] = tb; SALES.push(o); SIDX[o.no] = o; if (it) it.tb = tb; });
+    SALM = Object.keys(mo).sort(); }
+  ITEMS.concat(CITEMS).forEach(function (it) { if (!SIDX[it.no]) it.tb = SAL ? TBB[it.br] || "(tidak ada sales)" : ""; });
+  salesCalc();
+}
+/* bulan yang dipakai analisa: pilihan user, default 6 bulan terakhir */
+function salesMonths() { var sel = (ST.hs.mo || []).filter(function (m) { return SALM.indexOf(m) >= 0; }); return sel.length ? sel.sort() : SALM.slice(-6); }
+function salesCalc() {
+  var M = salesMonths(), ix = {}; M.forEach(function (m, i) { ix[m] = i; });
+  ITEMS.concat(CITEMS).forEach(function (it) { it.sq = 0; it.sv = 0; it.sold = false; it.dead = false; });
+  SALES.forEach(function (o) { var qm = M.map(function () { return 0; }), vm = qm.slice(), q = 0, v = 0;
+    o.e.forEach(function (x) { var k = ix[dayISO(x[0]).slice(0, 7)]; if (k == null) return; qm[k] += x[1]; vm[k] += x[2]; q += x[1]; v += x[2]; });
+    o.qm = qm; o.vm = vm; o.q = Math.round(q * 1000) / 1000; o.v = v; if (o.it) { o.it.sq = o.q; o.it.sv = v; o.it.sold = o.q > 0; } });
+  ITEMS.concat(CITEMS).forEach(function (it) { it.dead = !!(SAL && it.s && it.q > 0 && !it.sold); });
 }
 /* Planogram: Name yang dikecualikan (mis. VARIANT) */
 var PNX = []; try { PNX = JSON.parse(localStorage.getItem("inv_pnx") || "[]") || []; } catch (e) {}
@@ -416,14 +445,14 @@ function summary() { // dipakai untuk riwayat harian
 /* ===== state ===== */
 function newSF() { return {cat: [], ty: [], mb: [], cls: []}; }
 function newDF() { return {cat: [], sub: [], mb: [], ty: [], src: [], kd: [], cls: [], od: [], dq: [], nw: [], q: "", sort: "v", stp: 0, need: 0, qneg: 0, pg: [], tb: [], sl: []}; }
-var ST = {tab: "sum", sf: newSF(), df: newDF(), all: false, pend: null, cr: [], cn: [], hs: {tb: [], cat: [], mb: [], cons: 0, grp: "cat", m: "v", q: "", all: false}};
+var ST = {tab: "sum", sf: newSF(), df: newDF(), all: false, pend: null, cr: [], cn: [], hs: {mo: [], tb: [], cat: [], mb: [], cons: 0, grp: "cat", m: "v", q: "", all: false}};
 var MSO = "";
 try { var t0 = localStorage.getItem("inv_tab"); if (t0 && /^(sum|det|his|data)$/.test(t0)) ST.tab = t0; } catch (e) {}
 function getA(k) { if (k === "pnx") return PNX; var p = k.split("."); return p.length > 1 ? ST[p[0]][p[1]] : ST[k]; }
-function setA(k, v) { if (k === "pnx") { PNX = v; try { localStorage.setItem("inv_pnx", JSON.stringify(v)); } catch (e) {} planoFlags(); return; } var p = k.split("."); if (p.length > 1) ST[p[0]][p[1]] = v; else ST[k] = v; ST.all = false; }
+function setA(k, v) { if (k === "hs.mo") { ST.hs.mo = v; salesCalc(); return; } if (k === "pnx") { PNX = v; try { localStorage.setItem("inv_pnx", JSON.stringify(v)); } catch (e) {} planoFlags(); return; } var p = k.split("."); if (p.length > 1) ST[p[0]][p[1]] = v; else ST[k] = v; ST.all = false; }
 function opts(A, key, lab) { var m = {}; A.forEach(function (it) { var v = it[key]; if (v != null && v !== "") m[v] = 1; }); return Object.keys(m).sort().map(function (k) { return [k, lab ? lab(k) : k]; }); }
-function msel(k, label, op, sel) {
-  var txt = !sel.length ? "Semua" : sel.length === 1 ? (op.filter(function (o) { return o[0] === sel[0]; })[0] || ["", sel[0]])[1] : sel.length + " dipilih";
+function msel(k, label, op, sel, emptyTxt) {
+  var txt = !sel.length ? (emptyTxt || "Semua") : sel.length === 1 ? (op.filter(function (o) { return o[0] === sel[0]; })[0] || ["", sel[0]])[1] : sel.length + " dipilih";
   return '<details class="ms" data-ms="' + k + '"' + (MSO === k ? " open" : "") + '><summary>' + esc(label) + ': <b>' + esc(txt) + '</b></summary><div class="ms-pop">'
     + (op.length > 12 ? '<input type="search" class="ms-q" placeholder="Cari…" aria-label="Cari pilihan">' : "") + '<div class="ms-list">' + op.map(function (o) { return '<label><input type="checkbox" data-msk="' + k + '" value="' + esc(o[0]) + '"' + (sel.indexOf(o[0]) >= 0 ? " checked" : "") + "> " + esc(o[1]) + "</label>"; }).join("") + "</div>"
     + '<div class="ms-act"><button type="button" class="btn" data-msall="' + k + '">Semua</button><button type="button" class="btn" data-msnone="' + k + '">Kosongkan</button></div></div></details>';
@@ -614,7 +643,7 @@ function renderDet() {
 /* ===== tab History Sales ===== */
 function renderHis() {
   if (!SAL) { $("p-his").innerHTML = '<div class="card empty">History Sales belum diupload. Buka tab <b>Data &amp; Upload</b> lalu upload file <b>Retail and Distribution Sales</b> (.xlsx).</div>'; return; }
-  var f = ST.hs, M = SAL.months, NM = M.length;
+  var f = ST.hs, M = salesMonths(), NM = M.length, pFrom = M[0] + "-01", pTo = M[NM - 1] + "-" + p2(new Date(Date.UTC(+M[NM - 1].slice(0, 4), +M[NM - 1].slice(5), 0)).getUTCDate()); if (pTo > SAL.date) pTo = SAL.date; if (pFrom < SAL.from) pFrom = SAL.from;
   var inF = function (o) { return inA(f.tb, o.tb || "(kosong)") && inA(f.cat, o.cat) && inA(f.mb, o.mb); };
   var S = SALES.filter(function (o) { return inF(o) && (f.cons || !o.cons); });
   var I = ITEMS.filter(inF);
@@ -622,9 +651,10 @@ function renderHis() {
   var goH = function (o) { var x = {src: "both,stock,repl"}; if (f.tb.length) x.tb = f.tb.join("|"); if (f.cat.length && !o.cat) x.cats = f.cat; if (f.mb.length) x.mbs = f.mb; Object.keys(o).forEach(function (k) { x[k] = o[k]; }); return x; };
   var tbO = opts(SALES.concat(ITEMS), "tb"), cO = opts(SALES.concat(ITEMS), "cat"), mO = opts(SALES.concat(ITEMS), "mb");
   var act = f.tb.length || f.cat.length || f.mb.length;
-  var h = '<div class="fbar nocap">' + msel("hs.tb", "Type Brand", tbO, f.tb) + msel("hs.cat", "Category", cO, f.cat) + msel("hs.mb", "Master Brand", mO, f.mb)
+  var moO = SALM.map(function (m) { return [m, BLN[+m.slice(5) - 1] + " " + m.slice(0, 4)]; }).reverse();
+  var h = '<div class="fbar nocap">' + msel("hs.mo", "Bulan", moO, (f.mo || []).filter(function (m) { return SALM.indexOf(m) >= 0; }), SALM.length > 6 ? "6 bulan terakhir" : "Semua") + msel("hs.tb", "Type Brand", tbO, f.tb) + msel("hs.cat", "Category", cO, f.cat) + msel("hs.mb", "Master Brand", mO, f.mb)
     + '<span class="seg" role="group" aria-label="Consignment"><button type="button" data-hc="0" aria-pressed="' + !f.cons + '">Tanpa Consignment</button><button type="button" data-hc="1" aria-pressed="' + !!f.cons + '">Termasuk Consignment</button></span>'
-    + (act ? '<button class="btn" type="button" id="hs-clr">Reset filter</button>' : "") + '<span class="sub">Periode ' + dl(SAL.from) + " – " + dl(SAL.date) + " (" + NM + " bulan). Filter ini hanya berlaku di tab History Sales.</span></div>";
+    + (act ? '<button class="btn" type="button" id="hs-clr">Reset filter</button>' : "") + '<span class="sub">Periode ' + dl(pFrom) + " – " + dl(pTo) + " (" + NM + " bulan). Data tersimpan " + dl(SAL.from) + " – " + dl(SAL.date) + ". Filter ini hanya berlaku di tab History Sales.</span></div>";
   var desc = [f.tb.join(", "), f.cat.length ? (f.cat.length > 3 ? f.cat.length + " category" : f.cat.join(", ")) : "", f.mb.length ? "Brand " + (f.mb.length > 3 ? f.mb.length + " dipilih" : f.mb.join(", ")) : "", f.cons ? "termasuk Consignment" : ""].filter(Boolean).join(" · ");
   var tq = sumBy(S, function (o) { return o.q; }), tv = sumBy(S, function (o) { return o.v; }), sold = cnt(S, function (o) { return o.q > 0; });
   var unsR = I.filter(function (it) { return it.r && !it.sold; }), unsP = I.filter(function (it) { return it.pg && !it.sold; }), dead = I.filter(function (it) { return it.dead; });
@@ -658,7 +688,7 @@ function renderHis() {
   var part = function (L, isP, fx) { var X = L.filter(function (it) { return isP ? it.pg : it.r; }), U = X.filter(function (it) { return !it.sold; }), sg = isP ? {pg: "pg", sl: "unsold"} : {src: "both,repl", sl: "unsold"};
     return '<td class="gs">' + n0(X.length) + "</td><td>" + lnk(U.length, goH(Object.assign({}, sg, fx))) + '</td><td class="' + (X.length && U.length / X.length > 0.2 ? "pbad" : "pok") + '">' + pc(U.length, X.length) + "</td><td>" + n0(Math.round(sumBy(U, function (it) { return it.s ? it.v : 0; }))) + "</td>"; };
   var rowU = function (L, fx) { return part(L, false, fx) + (PLN ? part(L, true, fx) : ""); };
-  h += '<div class="card" id="card-uns"><div class="cardh"><div><h2>Item Repsis' + (PLN ? " &amp; Planogram" : "") + ' tidak terjual' + (desc ? " · " + esc(desc) : "") + '</h2><p class="note">Item Repsis' + (PLN ? " / Planogram" : "") + " yang total Net Qty " + dl(SAL.from) + " – " + dl(SAL.date) + " 0 atau kurang. Value = nilai stok saat ini (Stock Qty and Value). Merah = lebih dari 20% tidak terjual. Tanpa Consignment.</p></div>" + capBtn("card-uns") + "</div>"
+  h += '<div class="card" id="card-uns"><div class="cardh"><div><h2>Item Repsis' + (PLN ? " &amp; Planogram" : "") + ' tidak terjual' + (desc ? " · " + esc(desc) : "") + '</h2><p class="note">Item Repsis' + (PLN ? " / Planogram" : "") + " yang total Net Qty " + dl(pFrom) + " – " + dl(pTo) + " 0 atau kurang. Value = nilai stok saat ini (Stock Qty and Value). Merah = lebih dari 20% tidak terjual. Tanpa Consignment.</p></div>" + capBtn("card-uns") + "</div>"
     + '<div class="tw"><table class="plt"><thead><tr class="grp"><th class="l" rowspan="2">Category</th><th colspan="4" class="gs ph-r">Repsis</th>' + (PLN ? '<th colspan="4" class="gs ph-n">Planogram</th>' : "") + "</tr>"
     + '<tr class="grp"><th class="gs ph-r">∑ SKU</th><th class="ph-r">Tidak terjual</th><th class="ph-r">%</th><th class="ph-r">Value stok</th>' + (PLN ? '<th class="gs ph-n">∑ SKU</th><th class="ph-n">Tidak terjual</th><th class="ph-n">%</th><th class="ph-n">Value stok</th>' : "") + "</tr></thead><tbody>"
     + cs.map(function (c) { return '<tr><td class="l">' + esc(c) + "</td>" + rowU(GC[c], {cat: c}) + "</tr>"; }).join("") + '</tbody><tfoot><tr><td class="l">10005 - PCN</td>' + rowU(I, {}) + "</tr></tfoot></table></div></div>";
@@ -666,7 +696,7 @@ function renderHis() {
   // 3. Dead stock per Category
   var GD = grpBy(dead, "cat"), cd = Object.keys(GD).sort(), withStk = function (c) { return cnt(I, function (it) { return it.s && it.q > 0 && (!c || it.cat === c); }); };
   var rowD = function (L, c) { var n = withStk(c); return "<td>" + lnk(L.length, goH(c ? {cat: c, sl: "dead", sort: "v"} : {sl: "dead", sort: "v"})) + "</td><td>" + pc(L.length, n) + "</td><td>" + n0(sumBy(L, function (it) { return it.q; })) + "</td><td>" + n0(Math.round(sumBy(L, function (it) { return it.v; }))) + "</td><td>" + n0(cnt(L, function (it) { return it.r; })) + "</td><td>" + n0(cnt(L, function (it) { return it.pg; })) + "</td>"; };
-  h += '<div class="card" id="card-dead"><div class="cardh"><div><h2>Dead stock per Category' + (desc ? " · " + esc(desc) : "") + '</h2><p class="note">Item dengan Qty stok &gt; 0 tetapi tidak terjual selama ' + dl(SAL.from) + " – " + dl(SAL.date) + ". % = dibagi jumlah SKU yang ada stoknya di category tersebut. Value dalam Rupiah. Tanpa Consignment.</p></div>" + capBtn("card-dead") + "</div>"
+  h += '<div class="card" id="card-dead"><div class="cardh"><div><h2>Dead stock per Category' + (desc ? " · " + esc(desc) : "") + '</h2><p class="note">Item dengan Qty stok &gt; 0 tetapi tidak terjual selama ' + dl(pFrom) + " – " + dl(pTo) + ". % = dibagi jumlah SKU yang ada stoknya di category tersebut. Value dalam Rupiah. Tanpa Consignment.</p></div>" + capBtn("card-dead") + "</div>"
     + '<div class="tw"><table><thead><tr><th class="l">Category</th><th>SKU</th><th>% SKU ber-stok</th><th>Qty</th><th>Value</th><th>Repsis</th><th>Planogram</th></tr></thead><tbody>'
     + (cd.map(function (c) { return '<tr><td class="l">' + esc(c) + "</td>" + rowD(GD[c], c) + "</tr>"; }).join("") || '<tr><td class="l mut" colspan="7">Tidak ada dead stock.</td></tr>') + '</tbody><tfoot><tr><td class="l">10005 - PCN</td>' + rowD(dead, "") + "</tr></tfoot></table></div></div>";
 
@@ -680,14 +710,14 @@ function renderHis() {
     + "</tbody></table></div>" + (L.length > lim ? '<div class="row nocap" style="margin-top:8px"><span class="sub">Menampilkan ' + n0(lim) + " dari " + n0(L.length) + ' item (Download Excel berisi semua)</span><button class="btn" id="hs-all" type="button">Tampilkan semua</button></div>' : "") + "</div>";
   $("p-his").innerHTML = h;
 }
-function hsXL() { var L = ST.hsRows || [], M = SAL.months, aoa = [["Category", "Master Brand", "Brand", "No Item", "Item Name", "Type Brand", "Function Class", "Total Net Qty (Sales Qty + Return Qty)", "Total Amount Exclude Tax"].concat(M.map(function (m) { return "Net Qty " + m; }), M.map(function (m) { return "Amount " + m; }))];
+function hsXL() { var L = ST.hsRows || [], M = salesMonths(), aoa = [["Category", "Master Brand", "Brand", "No Item", "Item Name", "Type Brand", "Function Class", "Total Net Qty (Sales Qty + Return Qty)", "Total Amount Exclude Tax"].concat(M.map(function (m) { return "Net Qty " + m; }), M.map(function (m) { return "Amount " + m; }))];
   L.forEach(function (o) { aoa.push([o.cat, o.mb, o.br, o.no, o.nm, o.tb, o.cls === "(kosong)" ? "" : o.cls, o.q, o.v].concat(o.qm, o.vm)); });
-  xlsxOut(aoa, "Sales per item", "History_Sales_" + SAL.from + "_sd_" + SAL.date + ".xlsx", aoa[0].map(function (h, i) { return i === 4 ? 45 : 14; })); }
+  xlsxOut(aoa, "Sales per item", "History_Sales_" + M[0] + "_sd_" + M[M.length - 1] + ".xlsx", aoa[0].map(function (h, i) { return i === 4 ? 45 : 14; })); }
 function FCN() { return ITEMS.filter(function (it) { return it.s && it.ab; }).length; }
 function renderData() {
   var info = function (x, lab, extra) { if (!x) return '<h3 style="margin-top:12px">' + lab + '</h3><p class="note">Belum ada data.</p>';
     return '<h3 style="margin-top:12px">' + lab + '</h3><div class="tw"><table><tbody><tr><td class="l">File</td><td class="l">' + esc(x.file || lab) + '</td></tr><tr><td class="l">Tanggal data</td><td class="l">' + dlH(x.date) + '</td></tr><tr><td class="l">Ditarik</td><td class="l">' + (x.at ? dl(x.at.slice(0, 10)) + " " + x.at.slice(11) : "—") + '</td></tr><tr><td class="l">Diupload</td><td class="l">' + (x.upAt ? new Date(x.upAt).toLocaleString("id-ID") : "—") + '</td></tr><tr><td class="l">Isi</td><td class="l">' + (x.kind === "plano" ? n0(plItems(x)) + " item unik" : x.kind === "sales" ? n0(x.rows.length) + " item terjual/retur" : n0(x.rows.length) + " SKU") + (extra || "") + "</td></tr></tbody></table></div>"; };
-  $("d-status").innerHTML = info(STK, "Stock Qty and Value", STK ? " (termasuk " + n0(EXC.n) + " SKU Consignment yang tidak dianalisa) · nilai tanpa Consignment " + rp(sumBy(ITEMS, function (it) { return it.s ? it.v : 0; })) : "") + info(RPL, "Replenishment Calculation by Date") + info(SAL, "History Sales", SAL ? " · periode " + dl(SAL.from) + " – " + dl(SAL.date) : "") + info(PLN, "Item Planogram") + info(ABC, "Report ABCD Class (Function Class)", ABC && FCN() ? " · cocok dengan " + n0(FCN()) + " SKU stok" : "");
+  $("d-status").innerHTML = info(STK, "Stock Qty and Value", STK ? " (termasuk " + n0(EXC.n) + " SKU Consignment yang tidak dianalisa) · nilai tanpa Consignment " + rp(sumBy(ITEMS, function (it) { return it.s ? it.v : 0; })) : "") + info(RPL, "Replenishment Calculation by Date") + info(SAL, "History Sales", SAL ? " · periode " + dl(SAL.from) + " – " + dl(SAL.date) + (SAL.batches && SAL.batches.length ? "<br>Upload tersimpan: " + SAL.batches.map(function (b) { return dl(b.from) + " – " + dl(b.to) + (b.file ? " (" + esc(b.file) + ")" : ""); }).join("<br>") : "") : "") + info(PLN, "Item Planogram") + info(ABC, "Report ABCD Class (Function Class)", ABC && FCN() ? " · cocok dengan " + n0(FCN()) + " SKU stok" : "");
   var hs = Object.keys(HIST).sort().reverse();
   $("d-hist").innerHTML = hs.length ? '<div class="tw"><table><thead><tr><th class="l">Tanggal stok</th><th>SKU stok</th><th>Nilai stok</th><th>Repsis</th><th>Non Repsis</th><th>Hanya di Repsis</th><th>Stok minus</th><th>Stok 0 (Repsis)</th><th>Di bawah Min</th><th>Over Max</th><th>Nilai Over Max</th><th class="nocap"></th></tr></thead><tbody>'
     + hs.map(function (d) { var o = HIST[d]; return '<tr><td class="l">' + dlH(d) + "</td><td>" + n0(o.sku) + "</td><td>" + rpT(o.val) + "</td><td>" + n0(o.inR) + "</td><td>" + n0(o.outR) + "</td><td>" + n0(o.onlyR) + '</td><td class="neg">' + n0(o.minus) + "</td><td>" + n0(o.out) + "</td><td>" + n0(o.rop) + "</td><td>" + n0(o.over) + "</td><td>" + rpT(o.overv) + '</td><td class="nocap"><button class="btn danger" type="button" style="padding:3px 8px;font-size:12px" data-hdel="' + esc(d) + '">Hapus</button></td></tr>'; }).join("") + "</tbody></table></div>"
@@ -726,7 +756,7 @@ function renderPrev() {
     h += '<div class="tw"><table><thead><tr><th class="l">File</th><th class="l">Tanggal data</th><th class="l">Isi</th></tr></thead><tbody>'
       + (P.stock ? (function () { var k = keepS(P.stock); return line(P.stock, "Stock Qty and Value", " · " + n0(P.stock.rows.length - k.rows.length) + " SKU Consignment tidak dianalisa · nilai tanpa Consignment " + rp(sumBy(k.rows, function (r) { return r[12]; })) + " · " + n0(cnt(k.rows, function (r) { return r[9] < 0; })) + " SKU minus"); })() : "")
       + (P.abcd ? (function () { var cc = {}; P.abcd.rows.forEach(function (r) { cc[r[1] || "-"] = (cc[r[1] || "-"] || 0) + 1; }); return line(P.abcd, "Report ABCD Class", " · Function Class " + Object.keys(cc).sort().map(function (k) { return k + ": " + n0(cc[k]); }).join(", ")); })() : "")
-      + (P.sales ? line(P.sales, "History Sales (Retail and Distribution Sales)", " · " + n0(P.sales.lines) + " baris transaksi · periode " + dl(P.sales.from) + " – " + dl(P.sales.date) + " (" + P.sales.months.length + " bulan) · Net Qty " + n0(sumBy(P.sales.rows, function (r) { return r[6].reduce(function (a, b) { return a + b; }, 0); })) + " · Amount " + rp(sumBy(P.sales.rows, function (r) { return r[7].reduce(function (a, b) { return a + b; }, 0); }))) : "")
+      + (P.sales ? line(P.sales, "History Sales (Retail and Distribution Sales)", " · " + n0(P.sales.lines) + " baris transaksi · periode " + dl(P.sales.from) + " – " + dl(P.sales.date) + " · Net Qty " + n0(sumBy(P.sales.rows, function (r) { return sumBy(r[6], function (e) { return e[1]; }); })) + " · Amount " + rp(sumBy(P.sales.rows, function (r) { return sumBy(r[6], function (e) { return e[2]; }); }))) : "")
       + (P.plano ? line(P.plano, "Item Planogram", " · " + n0(P.plano.dict.length) + " Name · " + n0(P.plano.rows.length) + " baris lokasi · total Capacity " + n0(sumBy(P.plano.rows, function (r) { return r[1]; }))) : "")
       + (P.repl ? line(P.repl, "Replenishment Calculation by Date", " · " + n0(cnt(P.repl.rows, function (r) { return r[21] > r[19]; })) + " SKU di atas Max") : "") + "</tbody></table></div>";
     if (S2 && R2) { S2 = keepS(S2); R2 = keepR(R2); var si = {}, ri = {}; S2.rows.forEach(function (r) { si[r[0]] = 1; }); R2.rows.forEach(function (r) { ri[r[0]] = 1; });
@@ -734,7 +764,8 @@ function renderPrev() {
       h += '<p style="margin:10px 0 0">Setelah disimpan: <b>' + n0(b) + "</b> SKU Repsis · <b>" + n0(S2.rows.length - b) + "</b> SKU Non Repsis · <b>" + n0(cnt(R2.rows, function (r) { return !si[r[0]]; })) + "</b> SKU hanya di Repsis.</p>";
       if ((P.stock || STK).date !== (P.repl || RPL).date) h += '<p class="warnline">⚠ Tanggal Stock Qty and Value (' + dl((P.stock || STK).date) + ") berbeda dengan Replenishment (" + dl((P.repl || RPL).date) + "). Pastikan memang ini file yang dimaksud.</p>"; }
     else if (P.stock || P.repl) h += '<p class="warnline">' + (S2 ? "Replenishment Calculation by Date belum ada, perbandingan baru lengkap setelah file itu diupload." : "Stock Qty and Value belum ada, perbandingan baru lengkap setelah file itu diupload.") + "</p>";
-    var rep = [P.stock && STK ? "Stock Qty and Value lama (" + dl(STK.date) + ", " + n0(STK.rows.length) + " baris)" : "", P.repl && RPL ? "Replenishment lama (" + dl(RPL.date) + ", " + n0(RPL.rows.length) + " baris)" : "", P.abcd && ABC ? "ABCD Class lama (" + dl(ABC.date) + ", " + n0(ABC.rows.length) + " baris)" : "", P.plano && PLN ? "Item Planogram lama (" + n0(plItems(PLN)) + " item)" : "", P.sales && SAL ? "History Sales lama (" + dl(SAL.from) + " – " + dl(SAL.date) + ")" : ""].filter(Boolean);
+    var rep = [P.stock && STK ? "Stock Qty and Value lama (" + dl(STK.date) + ", " + n0(STK.rows.length) + " baris)" : "", P.repl && RPL ? "Replenishment lama (" + dl(RPL.date) + ", " + n0(RPL.rows.length) + " baris)" : "", P.abcd && ABC ? "ABCD Class lama (" + dl(ABC.date) + ", " + n0(ABC.rows.length) + " baris)" : "", P.plano && PLN ? "Item Planogram lama (" + n0(plItems(PLN)) + " item)" : "", ""].filter(Boolean);
+    if (P.sales) h += '<p class="warnline">➕ History Sales <b>ditambahkan</b> ke data yang sudah ada' + (SAL ? " (" + dl(SAL.from) + " – " + dl(SAL.date) + ")" : "") + '. Penjualan tanggal ' + dl(P.sales.from) + " – " + dl(P.sales.date) + " yang sudah tersimpan akan <b>diganti</b> dengan isi file ini, sehingga data yang sama tidak terhitung dua kali. Tanggal lain tetap.</p>";
     if (rep.length) h += '<p class="warnline">🗑 Saat disimpan, data ' + rep.join(" dan ") + " akan dihapus seluruhnya dan diganti dengan file baru (bukan ditambahkan).</p>";
     h += '<div class="row" style="justify-content:flex-start;margin:12px 0 0"><button class="btn primary" type="button" id="pv-save">Simpan ke dashboard</button><button class="btn" type="button" id="pv-cancel">Batal</button><span class="sub" id="pv-st"></span></div>';
   } else h += '<div class="row" style="justify-content:flex-start;margin:12px 0 0"><button class="btn" type="button" id="pv-cancel">Tutup</button></div>';
@@ -743,14 +774,14 @@ function renderPrev() {
 var CH = 2500; // baris per bagian
 function packDocs(x) { var tag = "t" + Date.now().toString(36), docs = [], n = Math.ceil(x.rows.length / CH);
   for (var i = 0; i < n; i++) docs.push({coll: x.kind, id: tag + "-" + i, data: {tag: tag, i: i, rows: x.rows.slice(i * CH, (i + 1) * CH)}});
-  docs.push({coll: x.kind, id: "meta", data: {tag: tag, n: n, date: x.date, at: x.at, store: x.store || "", file: x.file, upAt: x.upAt, dict: x.dict, count: x.rows.length, from: x.from || "", months: x.months || null, lines: x.lines || 0}});
+  docs.push({coll: x.kind, id: "meta", data: {fmt: x.fmt || 0, batches: x.batches || null, tag: tag, n: n, date: x.date, at: x.at, store: x.store || "", file: x.file, upAt: x.upAt, dict: x.dict, count: x.rows.length, from: x.from || "", months: x.months || null, lines: x.lines || 0}});
   return {tag: tag, docs: docs}; }
 function savePend() {
   var P = ST.pend, b = $("pv-save"), st = $("pv-st"); if (!P || (!P.stock && !P.repl && !P.abcd && !P.plano && !P.sales)) return;
   if (ONLINE && !PIN) { askPin("PIN diperlukan untuk menyimpan data.", savePend); return; }
   var now = new Date().toISOString(), kinds = ["stock", "repl", "abcd", "plano", "sales"].filter(function (k) { return P[k]; });
   kinds.forEach(function (k) { P[k].upAt = now; });
-  var oS = STK, oR = RPL, oA = ABC, oP = PLN, oL = SAL; if (P.stock) STK = P.stock; if (P.repl) RPL = P.repl; if (P.abcd) ABC = P.abcd; if (P.plano) PLN = P.plano; if (P.sales) SAL = P.sales; build(); var H = summary();
+  var oS = STK, oR = RPL, oA = ABC, oP = PLN, oL = SAL; if (P.stock) STK = P.stock; if (P.repl) RPL = P.repl; if (P.abcd) ABC = P.abcd; if (P.plano) PLN = P.plano; if (P.sales) { P.sales = mergeSales(oL, P.sales); SAL = P.sales; } build(); var H = summary();
   if (!ONLINE) { HIST[H.date] = H; ST.pend = null; localPut(); render(); msg("✓ Data tersimpan di browser ini (versi lokal).", "ok"); return; }
   STK = oS; RPL = oR; ABC = oA; PLN = oP; SAL = oL; build();
   b.disabled = true; st.textContent = "Menyimpan…";
@@ -826,7 +857,7 @@ function localDel() { return idb().then(function (db) { if (!db) return; try { d
 function assemble() {
   var mk = function (k) { var m = DOCS[k + "|meta"]; if (!m) return null; m = m.data; var rows = [];
     for (var i = 0; i < m.n; i++) { var c = DOCS[k + "|" + m.tag + "-" + i]; if (!c) return null; rows = rows.concat(c.data.rows); }
-    return {kind: k, date: m.date, at: m.at, store: m.store, file: m.file, upAt: m.upAt, dict: m.dict, rows: rows, from: m.from, months: m.months, lines: m.lines}; };
+    return {kind: k, date: m.date, at: m.at, store: m.store, file: m.file, upAt: m.upAt, dict: m.dict, rows: rows, from: m.from, months: m.months, lines: m.lines, fmt: m.fmt, batches: m.batches}; };
   STK = mk("stock"); RPL = mk("repl"); ABC = mk("abcd"); PLN = mk("plano"); SAL = mk("sales"); HIST = {};
   Object.keys(DOCS).forEach(function (k) { if (k.indexOf("hist|") === 0) HIST[DOCS[k].data.date || k.slice(5)] = DOCS[k].data; });
   build();
